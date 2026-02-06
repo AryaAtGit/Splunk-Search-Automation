@@ -12,8 +12,9 @@ from datetime import datetime, timedelta
 # Configuration (User Editable)
 # =========================
 
-SPLUNK_USERNAME = os.getenv("SPLUNK_USERNAME")
-SPLUNK_PASSWORD = os.getenv("SPLUNK_PASSWORD")
+# Prompt user for Splunk credentials
+SPLUNK_USERNAME = input("Enter Splunk username: ").strip()
+SPLUNK_PASSWORD = input("Enter Splunk password: ").strip()
 
 QUERY_CSV = "queries.csv"
 PROGRESS_FILE = "Reports/progress.csv"
@@ -46,9 +47,7 @@ def time_range(start_offset_days=30, end_offset_days=0, end_hour=0, end_minute=0
 
 
 def create_progress_df():
-    return pd.DataFrame(
-        columns=["Title", "Status", "Progress (%)", "Events", "Runtime (s)"]
-    )
+    return pd.DataFrame(columns=["Title", "Status", "Progress (%)", "Events", "Runtime (s)"])
 
 
 def render_progress(df):
@@ -62,16 +61,16 @@ def export_progress(df, path):
     df.to_csv(path, index=False)
 
 
-def write_csv(data, file_path):
+def write_csv(data, title, host, app):
     if not data:
         return
-
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    folder = os.path.join("Reports", app or "search")
+    os.makedirs(folder, exist_ok=True)
+    file_path = os.path.join(folder, f"{title}_{host}.csv")
 
     fieldnames = set()
     for row in data:
         fieldnames.update(row.keys())
-
     with open(file_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=sorted(fieldnames))
         writer.writeheader()
@@ -81,7 +80,6 @@ def write_csv(data, file_path):
 # =========================
 # Splunk Search Functions
 # =========================
-
 def start_search(search, progress_df):
     app = search.get("app", "search")
     url = f"https://{search['host']}:8089/servicesNS/{SPLUNK_USERNAME}/{app}/search/jobs"
@@ -92,28 +90,18 @@ def start_search(search, progress_df):
     r = requests.post(
         url,
         auth=(SPLUNK_USERNAME, SPLUNK_PASSWORD),
-        data={
-            "search": query,
-            "earliest_time": search.get("earliest"),
-            "latest_time": search.get("latest")
-        },
+        data={"search": query, "earliest_time": search.get("earliest"), "latest_time": search.get("latest")},
         params={"output_mode": "json"},
         verify=False
     )
 
     if r.status_code != 201:
-        progress_df.loc[len(progress_df)] = [
-            search["title"], "FAILED", 0, 0, 0
-        ]
+        progress_df.loc[len(progress_df)] = [search["title"], "FAILED", 0, 0, 0]
         return None
 
     search["sid"] = r.json()["sid"]
     search["status"] = "CREATED"
-
-    progress_df.loc[len(progress_df)] = [
-        search["title"], "CREATED", 0, 0, 0
-    ]
-
+    progress_df.loc[len(progress_df)] = [search["title"], "CREATED", 0, 0, 0]
     return search
 
 
@@ -121,13 +109,7 @@ def update_progress(search, progress_df):
     app = search.get("app", "search")
     url = f"https://{search['host']}:8089/servicesNS/{SPLUNK_USERNAME}/{app}/search/jobs/{search['sid']}"
 
-    r = requests.get(
-        url,
-        auth=(SPLUNK_USERNAME, SPLUNK_PASSWORD),
-        params={"output_mode": "json"},
-        verify=False
-    )
-
+    r = requests.get(url, auth=(SPLUNK_USERNAME, SPLUNK_PASSWORD), params={"output_mode": "json"}, verify=False)
     content = r.json()["entry"][0]["content"]
 
     progress_df.loc[progress_df["Title"] == search["title"], :] = [
@@ -145,38 +127,28 @@ def fetch_results(search):
     app = search.get("app", "search")
     url = f"https://{search['host']}:8089/servicesNS/{SPLUNK_USERNAME}/{app}/search/jobs/{search['sid']}/results"
 
-    r = requests.get(
-        url,
-        auth=(SPLUNK_USERNAME, SPLUNK_PASSWORD),
-        params={"output_mode": "json", "count": 0},
-        verify=False
-    )
-
+    r = requests.get(url, auth=(SPLUNK_USERNAME, SPLUNK_PASSWORD), params={"output_mode": "json", "count": 0}, verify=False)
     if r.status_code == 200 and r.text.strip():
-        write_csv(r.json()["results"], search["output"])
+        write_csv(r.json()["results"], search["title"], search["host"], app)
 
 
 # =========================
 # Main Processor
 # =========================
-
 def process_queries():
     progress_df = create_progress_df()
     earliest, latest = time_range()
 
     searches = []
-
     with open(QUERY_CSV, newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
             if not row.get("query"):
                 continue
-
             searches.append({
                 "title": row["title"].strip(),
                 "host": row["host"].strip(),
                 "app": row.get("app", "search").strip(),
                 "query": row["query"].strip(),
-                "output": row["output"].strip(),
                 "earliest": earliest,
                 "latest": latest
             })
@@ -203,3 +175,4 @@ def process_queries():
 
 if __name__ == "__main__":
     process_queries()
+    
