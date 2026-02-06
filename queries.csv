@@ -1,1 +1,2 @@
 title,host,app,query
+Test Search,your_port,search,index=_internal | head 5
